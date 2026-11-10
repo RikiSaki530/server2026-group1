@@ -1,0 +1,26 @@
+{
+  "name": "temperature-temple",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "build": "nuxt build",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.0",
+    "nuxt": "^4.6.4",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vue-tsc": "^3.3.14"
+  },
+  "engines": {
+    "node": "^24.15.0 || >=26.0.0"
+  },
+  "overrides": {
+    "glob": "^14.0.4",
+    "minimatch": "^11.0.5"
+  }
+}

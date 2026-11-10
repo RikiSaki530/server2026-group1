@@ -1,27 +1,64 @@
 services:
   frontend:
-    # Placeholder: replace with a Nuxt build once the application exists.
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:80"
+      - "127.0.0.1:3000:3000"
+    environment:
+      NUXT_BACKEND_URL: http://backend:8000
+      NUXT_PUBLIC_KIBANA_URL: ${NUXT_PUBLIC_KIBANA_URL:-http://localhost:5601}
+    depends_on:
+      backend:
+        condition: service_healthy
 
   backend:
-    # Placeholder: replace with a FastAPI build once the application exists.
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
     environment:
       ELASTICSEARCH_URL: http://elasticsearch:9200
+      DEMO_MODE: ${DEMO_MODE:-false}
+      COLLECTION_INTERVAL_SECONDS: ${COLLECTION_INTERVAL_SECONDS:-300}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
     depends_on:
       elasticsearch:
         condition: service_healthy
 
   collector:
-    image: alpine:3.21
-    command: ["sleep", "infinity"]
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    restart: unless-stopped
     environment:
       ELASTICSEARCH_URL: http://elasticsearch:9200
+      NATURE_TOKEN: ${NATURE_TOKEN:-}
+      COLLECTION_INTERVAL_SECONDS: ${COLLECTION_INTERVAL_SECONDS:-300}
+      DEMO_MODE: ${DEMO_MODE:-false}
     depends_on:
       elasticsearch:
         condition: service_healthy
+
+  kibana-setup:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    command: ["python", "-m", "collector.setup_kibana"]
+    environment:
+      KIBANA_URL: http://kibana:5601
+      DEMO_MODE: ${DEMO_MODE:-false}
+    depends_on:
+      backend:
+        condition: service_healthy
+      kibana:
+        condition: service_started
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6
