@@ -1,0 +1,19 @@
+services:
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:3000:80"
+
+  backend:
+    image: nginx:alpine
+
+  collector:
+    image: alpine:3.21
+    command: ["sleep", "infinity"]
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: testdb

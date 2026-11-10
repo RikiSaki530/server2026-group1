@@ -1,0 +1,21 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Nuxt
+node_modules/
+.nuxt/
+.output/
+
+# Local data
+data/
+*.db
+
+# OS
+.DS_Store
