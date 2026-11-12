@@ -4,6 +4,10 @@
 
 Nature Remoを利用して室内の温度・湿度などを収集・可視化し、屋外の気象データと比較するIoT環境管理システム。
 
+## 現在の実装状況
+
+使用言語・技術構成、実装済み機能、保存データ、確認済みの範囲、未実装事項は [PROJECT_STATUS.md](PROJECT_STATUS.md) にまとめています。
+
 ## やりたいこと
 
 - Nature Remo 3台からセンサーデータを取得する。
@@ -49,7 +53,7 @@ docker compose logs --tail=100 collector kibana-setup
 - Kibana: http://localhost:5601
 - Elasticsearch と FastAPI は Compose 内だけで接続し、ホストにポートを公開しません。
 - トークンはブラウザに渡しません。`.env` は Git 管理対象外です。
-- 初回収集は起動直後、以降は標準で 300 秒間隔です。`COLLECTION_INTERVAL_SECONDS` で変更できます（最小60秒）。画面は60秒ごとに再取得します。
+- 初回収集は起動直後、以降は標準で 300 秒間隔です。`COLLECTION_INTERVAL_SECONDS` で変更できます（最小60秒）。画面は60秒ごとに保存済みデータを再取得します。「データを更新」ボタンでは、定期収集とは別に Nature Remo API からその時点の最新情報を取得・保存し、画面に反映します。取得中はボタンを無効化します。Remo 本体のセンサー測定を強制するものではないため、値やセンサー更新日時が変わらない場合もあります。
 - トークン未設定・APIエラー時は実測値を捏造せず、画面に収集状態と最終成功日時を表示します。
 
 ### データの流れ
@@ -102,7 +106,7 @@ ssh -L 3000:127.0.0.1:3000 -L 5601:127.0.0.1:5601 user@server
 ### 開発と検証
 
 ```bash
-python3 -m unittest discover -s tests -v
+docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" backend python -m unittest discover -s tests -v
 # 起動中の API を全期間検証
 docker compose exec -T backend python - < tests/smoke.py
 cd frontend
@@ -112,4 +116,9 @@ npm run typecheck
 npm run build
 ```
 
-API は `GET /health`、`GET /dashboard?period=30m|1h|1d|1w` を提供します。Nuxt の `/api/dashboard` がサーバ側で FastAPI に中継します。
+API は手動収集の `POST /collect`、`GET /health`、`GET /dashboard?period=30m|1h|1d|1w` を提供します。Nuxt の `/api/dashboard` がサーバ側で FastAPI に中継します。
+
+
+### デバイスの接続状態
+
+Nature Remo Cloud API の `online` を収集・保存し、カードと最新値の表にオンライン／オフラインを表示します。これは API 取得時点の状態で、常時の疎通監視ではありません。手動取得または定期収集で更新します。取得失敗時、確認から15分以上経過、接続情報のない古いデータは「未確認」、生成データは「デモ」と表示します。接続確認日時を併記し、センサー更新日時・収集成功とは別に扱います。既存インデックスにも起動時に boolean 型の online フィールドを追加します。

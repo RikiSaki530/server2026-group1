@@ -29,6 +29,7 @@ def ensure_indices():
         "device_id": {"type": "keyword"},
         "device_name": {"type": "keyword"},
         "source": {"type": "keyword"},
+        "online": {"type": "boolean"},
         "motion_detected_at": {"type": "date"},
         **{name: {"type": "float"} for name in METRICS},
         **{f"{name}_updated_at": {"type": "date"} for name in METRICS},
@@ -41,6 +42,8 @@ def ensure_indices():
             payload = json.loads(exc.read())
             if exc.code != 400 or payload.get("error", {}).get("type") != "resource_already_exists_exception":
                 raise
+            # Apply additive schema changes to existing persisted indices too.
+            es(f"{name}/_mapping", "PUT", mapping)
 
 
 def save_reading(reading):

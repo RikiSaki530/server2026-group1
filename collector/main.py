@@ -21,6 +21,8 @@ def normalize_device(device, collected_at):
     events = device.get("newest_events", {})
     reading = {"@timestamp": iso(collected_at), "device_id": device["id"],
                "device_name": device.get("name") or device["id"], "source": "nature_remo"}
+    if isinstance(device.get("online"), bool):
+        reading["online"] = device["online"]
     for code, metric in (("te", "temperature"), ("hu", "humidity"), ("il", "illumination")):
         event = events.get(code) or {}
         val = event.get("val")
@@ -63,6 +65,7 @@ def collect_once():
     es(f"{INDEX}/_refresh", "POST")
     es(f"{STATUS_INDEX}/_doc/{INDEX}?refresh=true", "POST", {"last_attempt": iso(now), "last_success": iso(now), "error": "", "device_count": len(readings)})
     logging.info("Saved %s devices (%s)", len(readings), INDEX)
+    return {"collected_at": iso(now), "device_count": len(readings)}
 
 
 def record_failure(exc):

@@ -21,6 +21,7 @@ services:
     environment:
       ELASTICSEARCH_URL: http://elasticsearch:9200
       DEMO_MODE: ${DEMO_MODE:-false}
+      NATURE_TOKEN: ${NATURE_TOKEN:-}
       COLLECTION_INTERVAL_SECONDS: ${COLLECTION_INTERVAL_SECONDS:-300}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
