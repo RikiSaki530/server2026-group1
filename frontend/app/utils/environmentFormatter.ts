@@ -8,6 +8,12 @@ export interface EnvironmentCsvTable {
   filename: string
 }
 
+function getJstDateKey(value: Date | string): string {
+  const date = typeof value === 'string' ? new Date(value) : value
+  // 'sv-SE' ロケールは YYYY-MM-DD 形式を返す
+  return date.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+}
+
 function formatJstDateTime(value?: string | null): string {
   if (!value) return ''
   return new Date(value).toLocaleString('ja-JP', {
@@ -29,12 +35,23 @@ export function formatEnvironmentTrendForCsv(
   visibleDevices: Device[],
   period: string
 ): EnvironmentCsvTable {
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const today = getJstDateKey(new Date())
 
   const validRecords = visibleDevices
     .flatMap(device =>
       device.history
-        .filter(p => p.temperature !== null || p.humidity !== null || p.illumination !== null)
+        .filter(p => {
+          // 値が存在しない空欄レコードを除外
+          const hasValue = p.temperature !== null || p.humidity !== null || p.illumination !== null
+          if (!hasValue) return false
+
+          // 1d（1日）選択時は、日本時間の当日（00:00:00 〜 23:59:59）のデータのみに絞り込む
+          if (period === '1d') {
+            return getJstDateKey(p.timestamp) === today
+          }
+
+          return true
+        })
         .map(p => ({ ...p, deviceName: device.name }))
     )
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
