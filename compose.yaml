@@ -5,7 +5,7 @@ services:
       dockerfile: frontend/Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:3000:3000"
     environment:
       NUXT_BACKEND_URL: http://backend:8000
       NUXT_PUBLIC_KIBANA_URL: ${NUXT_PUBLIC_KIBANA_URL:-http://localhost:5601}
