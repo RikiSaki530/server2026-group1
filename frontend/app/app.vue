@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Dashboard, Metric } from '../shared/types'
+import { formatEnvironmentTrendForCsv } from './utils/environmentFormatter'
+import { downloadCsvFile } from './utils/csv'
+
 const config = useRuntimeConfig()
 const connectionLabels = { online: 'オンライン', offline: 'オフライン', unknown: '未確認', demo: 'デモ' }
 const collecting = ref(false)
@@ -34,67 +37,11 @@ const mean = computed(() => {
 })
 const rows = computed(() => visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100))
 
-// 「環境の推移」の選択期間・選択デバイスの全データ（空欄行除外）
-const trendCsvRows = computed(() =>
-  visible.value
-    .flatMap(d =>
-      d.history
-        .filter(p => p.temperature !== null || p.humidity !== null || p.illumination !== null)
-        .map(p => ({ ...p, device: d.name }))
-    )
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-)
-
-function formatCsvDate(value?: string | null) {
-  if (!value) return ''
-  return new Date(value).toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZone: 'Asia/Tokyo'
-  })
-}
-
-function escapeCsvCell(value: unknown) {
-  if (value === null || value === undefined) return ''
-  return `"${String(value).replace(/"/g, '""')}"`
-}
-
-function roundCsvNum(value?: number | null, digits = 1) {
-  return value == null ? '' : Number(value.toFixed(digits))
-}
-
-function downloadTrendCsv() {
-  if (!trendCsvRows.value.length) return
-
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
-  const headers = ['時刻(JST)', 'デバイス', '温度(°C)', '湿度(%)', '照度(lx)']
-  const lines = trendCsvRows.value.map(row =>
-    [
-      formatCsvDate(row.timestamp),
-      row.device,
-      roundCsvNum(row.temperature, 1),
-      roundCsvNum(row.humidity, 1),
-      roundCsvNum(row.illumination, 0)
-    ]
-      .map(escapeCsvCell)
-      .join(',')
-  )
-
-  const csvContent = '\uFEFF' + [headers.join(','), ...lines].join('\r\n')
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `environment_${period.value}_${today}.csv`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+// 出力対象データの準備とクリック時ハンドラ
+const csvData = computed(() => formatEnvironmentTrendForCsv(visible.value, period.value))
+function handleExportCsv() {
+  if (!csvData.value.rows.length) return
+  downloadCsvFile(csvData.value.headers, csvData.value.rows, csvData.value.filename)
 }
 
 function format(value?: number, digits = 1) { return value == null ? '—' : value.toLocaleString('ja-JP', { maximumFractionDigits: digits }) }
@@ -151,7 +98,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div>
             <div class="trend-controls">
               <div class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div>
-              <button class="csv-button" :disabled="!trendCsvRows.length || status === 'pending'" @click="downloadTrendCsv">
+              <button class="csv-button" :disabled="!csvData.rows.length || status === 'pending'" @click="handleExportCsv">
                 <span>↓</span> CSV出力
               </button>
             </div>
