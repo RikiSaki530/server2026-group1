@@ -35,26 +35,119 @@ Nature Remoを利用して室内の温度・湿度などを収集・可視化し
 
 最終的には、分析結果に基づいてNature Remoからエアコンなどを制御し、室内環境を自動管理できるようにする。
 
-## 起動方法
+## クローンからの環境構築・起動
 
-Docker と Docker Compose を利用します。Docker Desktop の場合は少なくとも 4 GB のメモリを割り当ててください。
+以下のコマンドは macOS / Linux のターミナル、または Windows の WSL2 / Git Bash で実行します。
+
+### 1. 必要なツールを準備する
+
+- Git
+- Docker と Docker Compose v2（`docker compose` コマンド）
+  - macOS / Windows：Docker Desktop をインストールし、起動しておきます。
+  - Linux / 大学の VM：Docker Engine と Docker Compose プラグインをインストールし、Docker を起動しておきます。
+- Docker Desktop の場合は少なくとも 4 GB のメモリを割り当ててください。
+
+次のコマンドでインストールと Docker の起動を確認します。`docker info` が接続エラーになる場合は、Docker の起動状態や実行権限を確認してください。
 
 ```bash
-# 初回のみ。既存の .env は上書きしないでください。
-cp .env.example .env
-# .env の NATURE_TOKEN に Nature Remo の個人アクセストークンを設定
-
-docker compose up -d --build
-docker compose ps -a
-docker compose logs --tail=100 collector kibana-setup
+git --version
+docker --version
+docker compose version
+docker info
 ```
 
-- Nuxt: http://localhost:3000
-- Kibana: http://localhost:5601
+Python・Node.js・Elasticsearch などはコンテナ内に用意されるため、Docker で起動するだけならホストへの個別インストールは不要です。
+
+### 2. リポジトリをクローンする
+
+```bash
+git clone https://github.com/RikiSaki530/server2026-group1.git
+cd server2026-group1
+```
+
+非公開リポジトリの場合は、アクセス権のある GitHub アカウントで認証してください。SSH キーを設定済みの場合は、代わりに次のコマンドでもクローンできます。
+
+```bash
+git clone git@github.com:RikiSaki530/server2026-group1.git
+cd server2026-group1
+```
+
+以降の `docker compose` コマンドは、`compose.yaml` のあるリポジトリ直下で実行します。
+
+### 3. 環境変数を設定する
+
+初回のみ `.env.example` をコピーし、エディタで `.env` を編集します。既存の `.env` は上書きしないでください。
+
+```bash
+cp -n .env.example .env
+```
+
+実機で収集する場合は、Nature Remo の個人アクセストークンを `NATURE_TOKEN` に設定します。そのトークンで参照できる Remo が自動で収集対象になります。
+
+```dotenv
+NATURE_TOKEN=取得した個人アクセストークン
+COLLECTION_INTERVAL_SECONDS=300
+DEMO_MODE=false
+NUXT_PUBLIC_KIBANA_URL=http://localhost:5601
+```
+
+実機やトークンなしで動作確認する場合は、代わりに次の設定にします。
+
+```dotenv
+NATURE_TOKEN=
+COLLECTION_INTERVAL_SECONDS=300
+DEMO_MODE=true
+NUXT_PUBLIC_KIBANA_URL=http://localhost:5601
+```
+
+トークンはブラウザに渡しません。`.env` は Git 管理対象外です。実際のトークンを README やソースコードに書き込まないでください。
+
+### 4. ビルドして起動する
+
+```bash
+# Compose の設定を検証（環境変数の値は表示しない）
+docker compose config --quiet
+# イメージをビルドし、バックグラウンドで起動
+docker compose up -d --build
+```
+
+初回はイメージのダウンロードとビルド、Elasticsearch・Kibana の初期化に数分かかることがあります。ホストのポート `3000` と `5601` が空いている必要があります。
+
+### 5. 起動状態と画面を確認する
+
+```bash
+docker compose ps -a
+docker compose logs --tail=100 collector kibana-setup
+# FastAPI と Elasticsearch の接続確認
+docker compose exec backend python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health').read().decode())"
+```
+
+- Nuxt：<http://localhost:3000> を開き、デバイスの測定値が表示されることを確認します。デモ設定の場合はデモ表示と生成データを確認します。
+- Kibana：<http://localhost:5601> を開きます。
+- `backend` と `elasticsearch` が `healthy`、常駐サービスが起動中であれば正常です。`kibana-setup` は初期設定用なので、`Exited (0)` が正常終了です。
+- API の接続確認で `{"status":"ok"}` が返ることを確認します。Nature Remo の収集成功は画面の収集状態と `collector` のログで別途確認してください。
 - Elasticsearch と FastAPI は Compose 内だけで接続し、ホストにポートを公開しません。
-- トークンはブラウザに渡しません。`.env` は Git 管理対象外です。
-- 初回収集は起動直後、以降は標準で 300 秒間隔です。`COLLECTION_INTERVAL_SECONDS` で変更できます（最小60秒）。画面は60秒ごとに保存済みデータを再取得します。「データを更新」ボタンでは、定期収集とは別に Nature Remo API からその時点の最新情報を取得・保存し、画面に反映します。取得中はボタンを無効化します。Remo 本体のセンサー測定を強制するものではないため、値やセンサー更新日時が変わらない場合もあります。
-- トークン未設定・APIエラー時は実測値を捏造せず、画面に収集状態と最終成功日時を表示します。
+
+起動できない場合は、次のコマンドで各サービスのログを確認します。
+
+```bash
+docker compose logs --tail=100 frontend backend elasticsearch kibana collector kibana-setup
+```
+
+初回収集は起動直後、以降は標準で 300 秒間隔です。`COLLECTION_INTERVAL_SECONDS` で変更できます（最小60秒）。画面は60秒ごとに保存済みデータを再取得します。「データを更新」ボタンでは、定期収集とは別に Nature Remo API からその時点の最新情報を取得・保存し、画面に反映します。取得中はボタンを無効化します。Remo 本体のセンサー測定を強制するものではないため、値やセンサー更新日時が変わらない場合もあります。
+
+トークン未設定・APIエラー時は実測値を捏造せず、画面に収集状態と最終成功日時を表示します。
+
+### 6. 停止・再起動する
+
+```bash
+# 停止（保存済みデータは volume に残る）
+docker compose down
+# 再起動、または .env・コードの変更を反映
+docker compose up -d --build
+```
+
+`docker compose down -v` は保存済みデータも削除するため、通常の停止では使わないでください。
 
 ### データの流れ
 
