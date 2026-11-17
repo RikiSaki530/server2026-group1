@@ -1,6 +1,10 @@
 function escapeCsvCell(value: unknown): string {
   if (value === null || value === undefined) return ''
-  const str = String(value)
+  // Excelが文字列を数式として解釈しないよう、先頭にアポストロフィを付ける。
+  // 空白や制御文字の後に数式開始文字がある場合も対象にする。数値は変更しない。
+  const str = typeof value === 'string' && /^(?:[\t\r\n]|[\s\u0000-\u001f]*[=+@-])/.test(value)
+    ? `'${value}`
+    : String(value)
   // カンマ、ダブルクォーテーション、改行(\r, \n)が含まれる場合を含め、すべて安全にクォート処理する
   return `"${str.replace(/"/g, '""')}"`
 }
