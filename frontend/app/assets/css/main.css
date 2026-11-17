@@ -375,6 +375,12 @@ h1 {
 .panel-heading .eyebrow {
   margin-bottom:6px
 }
+.trend-controls {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap
+}
 .periods {
   background:var(--bg);
   border:1px solid var(--border);
@@ -395,6 +401,28 @@ h1 {
   background:var(--surface);
   box-shadow:0 1px 4px #0000000d;
   color:var(--ink)
+}
+.csv-button {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  border:1px solid var(--border);
+  border-radius:7px;
+  padding:8px 12px;
+  background:var(--surface);
+  color:var(--ink);
+  font-size:10px;
+  font-weight:550;
+  white-space:nowrap;
+  transition:border-color .15s,color .15s
+}
+.csv-button:hover:not(:disabled) {
+  border-color:var(--accent);
+  color:var(--accent)
+}
+.csv-button:disabled {
+  cursor:not-allowed;
+  opacity:.45
 }
 .chart-toolbar {
   margin-top:25px;
@@ -766,8 +794,15 @@ footer {
   .panel-heading {
     align-items:flex-start
   }
+  .trend-controls {
+    justify-content:flex-end
+  }
   .periods button {
     padding:6px 8px;
+    font-size:9px
+  }
+  .csv-button {
+    padding:6px 9px;
     font-size:9px
   }
   .panel-heading h2 {

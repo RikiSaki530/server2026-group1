@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Dashboard, Metric } from '../shared/types'
+import { formatEnvironmentTrendForCsv } from './utils/environmentFormatter'
+import { downloadCsvFile } from './utils/csv'
+
 const config = useRuntimeConfig()
 const connectionLabels = { online: 'オンライン', offline: 'オフライン', unknown: '未確認', demo: 'デモ' }
 const collecting = ref(false)
@@ -33,6 +36,14 @@ const mean = computed(() => {
   return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—'
 })
 const rows = computed(() => visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100))
+
+// 出力対象データの準備とクリック時ハンドラ
+const csvData = computed(() => formatEnvironmentTrendForCsv(visible.value, period.value))
+function handleExportCsv() {
+  if (!csvData.value.rows.length) return
+  downloadCsvFile(csvData.value.headers, csvData.value.rows, csvData.value.filename)
+}
+
 function format(value?: number, digits = 1) { return value == null ? '—' : value.toLocaleString('ja-JP', { maximumFractionDigits: digits }) }
 function date(value?: string) { return value ? new Date(value).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) : '未取得' }
 function sensorStale(value?: string) { return !value || Date.now() - new Date(value).getTime() > 15 * 60 * 1000 }
@@ -83,7 +94,15 @@ onBeforeUnmount(() => clearInterval(timer))
         </section>
 
         <section class="chart-panel card" aria-label="環境の推移">
-          <div class="panel-heading"><div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div><div class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div></div>
+          <div class="panel-heading">
+            <div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div>
+            <div class="trend-controls">
+              <div class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div>
+              <button class="csv-button" :disabled="!csvData.rows.length || status === 'pending'" @click="handleExportCsv">
+                <span>↓</span> CSV出力
+              </button>
+            </div>
+          </div>
           <div class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
           <div class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: ['#26b391', '#6383ed', '#edaa49', '#cf6ba5', '#8f80cf'][i % 5] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
           <ClientOnly><HistoryChart v-if="hasHistory" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="metric" :dark="dark" :period="period" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
