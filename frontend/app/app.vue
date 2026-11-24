@@ -61,6 +61,54 @@ function todayInJst() {
 const today = useState('history-today-jst', todayInJst)
 const selection = ref({ start: today.value, end: today.value })
 const range = computed(() => tab.value === 'history' ? selection.value : undefined)
+type WeatherChanges = { temperatures: { timestamp: number; temperature: number }[]; weather: { timestamp: number; label: string }[]; incomplete: boolean; tooLong: boolean }
+const startTime = ref('')
+const endTime = ref('')
+const requestedTimeBounds = computed(() => {
+  if (!range.value) return undefined
+  const start = Date.parse(`${range.value.start}T${startTime.value || '00:00'}:00+09:00`)
+  const lastMidnight = Date.parse(`${range.value.end}T00:00:00+09:00`)
+  const end = endTime.value ? Date.parse(`${range.value.end}T${endTime.value}:00+09:00`) : lastMidnight + 86400000
+  return { start, end }
+})
+const invalidTimeBounds = computed(() => Boolean(requestedTimeBounds.value && requestedTimeBounds.value.start >= requestedTimeBounds.value.end))
+const timeBounds = computed(() => invalidTimeBounds.value ? undefined : requestedTimeBounds.value)
+const weather = ref<WeatherChanges>()
+const showOutdoor = ref(true)
+const outdoor = computed(() => showOutdoor.value && (historyMetric.value === 'temperature' || rightMetric.value === 'temperature')
+  ? weather.value?.temperatures : undefined)
+const weatherUnavailable = ref(false)
+const weatherRefreshSlot = ref(0)
+function mergeObservations<T extends { timestamp: number }>(previous: T[], incoming: T[]): T[] {
+  const byTime = new Map(previous.map(point => [point.timestamp, point]))
+  for (const point of incoming) byTime.set(point.timestamp, point)
+  return [...byTime.values()].sort((a, b) => a.timestamp - b.timestamp)
+}
+watch([range, weatherRefreshSlot], async ([selectedRange], [previousRange], onCleanup) => {
+  if (selectedRange?.start !== previousRange?.start || selectedRange?.end !== previousRange?.end) {
+    weather.value = undefined
+  }
+  weatherUnavailable.value = false
+  if (!selectedRange) return
+  const request = new AbortController()
+  onCleanup(() => request.abort())
+  try {
+    const result = await $fetch<WeatherChanges>('/api/weather', { query: selectedRange, signal: request.signal })
+    if (request.signal.aborted) return
+    const previous = weather.value
+    if (result.incomplete && previous) {
+      weather.value = {
+        ...result,
+        weather: mergeObservations(previous.weather, result.weather),
+        temperatures: mergeObservations(previous.temperatures, result.temperatures),
+      }
+    } else {
+      weather.value = result
+    }
+  } catch {
+    if (!request.signal.aborted) weatherUnavailable.value = true
+  }
+})
 const query = computed(() => range.value ?? { period: period.value })
 const queryKey = computed(() => JSON.stringify(query.value))
 const { data: result, error, status, refresh } = await useAsyncData('dashboard', async (_app, { signal }) => {
@@ -91,7 +139,7 @@ function selectPreset(days: number) {
 const devices = computed(() => data.value?.devices || [])
 const visible = computed(() => devices.value.filter(d => !selected.value.includes(d.id)))
 const historyReady = computed(() => result.value?.key === queryKey.value)
-const hasHistory = computed(() => historyReady.value && visible.value.some(d => d.history.some(p => p[chartMetric.value] !== null || (rightMetric.value && p[rightMetric.value] !== null))))
+const hasHistory = computed(() => historyReady.value && (Boolean(outdoor.value?.length) || visible.value.some(d => d.history.some(p => p[chartMetric.value] !== null || (rightMetric.value && p[rightMetric.value] !== null)))))
 const mean = computed(() => {
   const vals = devices.value.filter(d => !d.stale).map(d => d.latest[metric.value]).filter((v): v is number => typeof v === 'number')
   return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—'
@@ -140,8 +188,14 @@ function toggle(id: string) { selected.value = selected.value.includes(id) ? sel
 let timer: ReturnType<typeof setInterval>
 onMounted(() => {
   dark.value = localStorage.getItem('temperature-theme') === 'dark'
+  const updateWeatherSlot = () => {
+    weatherRefreshSlot.value = Math.floor(Date.now() / (5 * 60000))
+  }
+  updateWeatherSlot()
   timer = setInterval(() => {
+    const previousToday = today.value
     today.value = todayInJst()
+    if (range.value?.end === today.value || range.value?.end === previousToday) updateWeatherSlot()
     if (!collecting.value) refresh()
   }, 60000)
 })
@@ -214,7 +268,11 @@ onBeforeUnmount(() => clearInterval(timer))
                 </select>
               </label>
             </div>
+            <label class="graph-device" v-if="historyMetric === 'temperature' || rightMetric === 'temperature'">
+              <input v-model="showOutdoor" type="checkbox"> 外気温（那覇）
+            </label>
           </fieldset>
+          <h3 class="graph-setting-label">軸を選択</h3>
           <div class="graph-axes">
             <label>左軸 <select v-model="historyMetric">
               <option v-for="(item, key) in metrics" :key="key" :value="key">{{ item.name }} ({{ item.unit }})</option>
@@ -224,12 +282,24 @@ onBeforeUnmount(() => clearInterval(timer))
               <option v-for="(item, key) in metrics" :key="key" :value="key" :disabled="key === historyMetric">{{ item.name }} ({{ item.unit }})</option>
             </select></label>
           </div>
+          <h3 class="graph-setting-label">縦軸の値を調整</h3>
           <div class="graph-bounds">
             <fieldset v-for="item in adjustableMetrics" v-show="item === historyMetric || item === rightMetric" :key="item">
               <legend>{{ metrics[item].name }}の表示範囲 ({{ metrics[item].unit }})</legend>
               <label>下限 <input v-model="axisInputs[item].min" type="number" step="any" placeholder="自動" :aria-invalid="invalidAxisBounds(item)"></label>
               <label>上限 <input v-model="axisInputs[item].max" type="number" step="any" placeholder="自動" :aria-invalid="invalidAxisBounds(item)"></label>
               <p v-if="invalidAxisBounds(item)" role="status">上限は下限より大きい値にしてください。現在は自動調整で表示しています。</p>
+            </fieldset>
+            <p v-if="historyMetric === 'illumination' && !rightMetric">照度は 0〜200 lx 固定です。</p>
+          </div>
+          <h3 class="graph-setting-label">横軸の値を調整</h3>
+          <div class="graph-bounds">
+            <fieldset>
+              <legend>横軸の時間帯 (JST)</legend>
+              <label>初日の開始 <input v-model="startTime" type="time" :aria-invalid="invalidTimeBounds"></label>
+              <label>最終日の終了 <input v-model="endTime" type="time" :aria-invalid="invalidTimeBounds"></label>
+              <button v-if="startTime || endTime" type="button" class="csv-button" @click="startTime = ''; endTime = ''">終日に戻す</button>
+              <p v-if="invalidTimeBounds" role="status">終了を開始より後にしてください。現在は終日を表示しています。</p>
             </fieldset>
           </div>
         </section>
@@ -249,8 +319,14 @@ onBeforeUnmount(() => clearInterval(timer))
           </div>
           <div v-if="!range" class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
           <div v-if="!range" class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: deviceColors[i % deviceColors.length] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
-          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" ref="historyChart" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="chartMetric" :right-metric="rightMetric" :left-bounds="leftBounds" :right-bounds="rightBounds" :series-colors="range ? customColors : undefined" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
+          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" ref="historyChart" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="chartMetric" :right-metric="rightMetric" :left-bounds="leftBounds" :right-bounds="rightBounds" :weather-observations="weather?.weather" :outdoor="outdoor" :time-bounds="timeBounds" :series-colors="range ? customColors : undefined" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
           <div class="chart-footnote">{{ range ? historyInterval : period === '1w' ? '1時間' : '5分' }}ごとの平均値を表示。空白はデータ未取得の区間です。</div>
+          <div v-if="range && (weather || weatherUnavailable)" class="weather-source">
+            琉球大学周辺の参考地点 · <a href="https://www.data.jma.go.jp/stats/etrn/index.php?prec_no=91&amp;block_no=47936" target="_blank" rel="noopener noreferrer">気象庁 那覇の天気</a>
+            <span v-if="weather?.tooLong"> · 天気の表示は31日間まで</span>
+            <span v-else-if="weatherUnavailable || (weather && !weather.weather.length)"> · 天気データを取得できませんでした</span>
+            <span v-else-if="weather?.incomplete"> · 一部の期間の天気データを取得できませんでした</span>
+          </div>
         </section>
 
         <section class="table-panel card"><div class="panel-heading"><div><p class="eyebrow">MEASUREMENT LOG</p><h2>{{ tab === 'history' ? '期間内の測定履歴' : '最新の測定値' }}</h2></div><span class="table-meta">{{ tab === 'history' ? '最新100件 · 区間平均' : `${devices.length} デバイス` }}</span></div>
