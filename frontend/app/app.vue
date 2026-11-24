@@ -27,18 +27,51 @@ const dark = ref(false)
 const tab = ref<'overview' | 'history'>('overview')
 const periods = [{ id: '30m', name: '30分' }, { id: '1h', name: '1時間' }, { id: '1d', name: '1日' }, { id: '1w', name: '1週間' }]
 const metrics = { temperature: { name: '温度', unit: '°C', icon: '♨' }, humidity: { name: '湿度', unit: '%', icon: '◈' }, illumination: { name: '照度', unit: 'lx', icon: '☼' } }
-const { data, error, status, refresh } = await useFetch<Dashboard>('/api/dashboard', { query: { period }, timeout: 20000 })
+function todayInJst() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+}
+const today = useState('history-today-jst', todayInJst)
+const selection = ref({ start: today.value, end: today.value })
+const range = computed(() => tab.value === 'history' ? selection.value : undefined)
+const query = computed(() => range.value ?? { period: period.value })
+const queryKey = computed(() => JSON.stringify(query.value))
+const { data: result, error, status, refresh } = await useAsyncData('dashboard', async (_app, { signal }) => {
+  const requestedQuery = query.value
+  const key = JSON.stringify(requestedQuery)
+  const dashboard = await $fetch<Dashboard>('/api/dashboard', { query: requestedQuery, signal, timeout: 20000 })
+  return { key, dashboard }
+}, { watch: [queryKey] })
+const data = computed(() => result.value?.dashboard)
+const dayMs = 86400000
+const rangeDays = computed(() => range.value ? (Date.parse(range.value.end) - Date.parse(range.value.start)) / dayMs + 1 : 0)
+const historyInterval = computed(() => rangeDays.value === 1 ? '5分' : rangeDays.value <= 7 ? '1時間' : rangeDays.value <= 31 ? '3時間' : '1日')
+function selectRange(start: string, end: string) {
+  selection.value = { start, end }
+}
+function selectPreset(days: number) {
+  const end = today.value
+  const start = new Date(Date.parse(end) - (days - 1) * dayMs)
+  if (days === 0) {
+    const day = start.getUTCDate()
+    start.setUTCDate(1)
+    start.setUTCMonth(start.getUTCMonth() - 1)
+    const lastDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate()
+    start.setUTCDate(Math.min(day, lastDay))
+  }
+  selectRange(start.toISOString().slice(0, 10), end)
+}
 const devices = computed(() => data.value?.devices || [])
 const visible = computed(() => devices.value.filter(d => !selected.value.includes(d.id)))
-const hasHistory = computed(() => visible.value.some(d => d.history.some(p => p[metric.value] !== null)))
+const historyReady = computed(() => result.value?.key === queryKey.value)
+const hasHistory = computed(() => historyReady.value && visible.value.some(d => d.history.some(p => p[metric.value] !== null)))
 const mean = computed(() => {
   const vals = devices.value.filter(d => !d.stale).map(d => d.latest[metric.value]).filter((v): v is number => typeof v === 'number')
   return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—'
 })
-const rows = computed(() => visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100))
+const rows = computed(() => historyReady.value ? visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100) : [])
 
 // 出力対象データの準備とクリック時ハンドラ
-const csvData = computed(() => formatEnvironmentTrendForCsv(visible.value, period.value))
+const csvData = computed(() => formatEnvironmentTrendForCsv(historyReady.value ? visible.value : [], period.value, range.value))
 function handleExportCsv() {
   if (!csvData.value.rows.length) return
   downloadCsvFile(csvData.value.headers, csvData.value.rows, csvData.value.filename)
@@ -51,7 +84,10 @@ function toggle(id: string) { selected.value = selected.value.includes(id) ? sel
 let timer: ReturnType<typeof setInterval>
 onMounted(() => {
   dark.value = localStorage.getItem('temperature-theme') === 'dark'
-  timer = setInterval(() => { if (!collecting.value) refresh() }, 60000)
+  timer = setInterval(() => {
+    today.value = todayInJst()
+    if (!collecting.value) refresh()
+  }, 60000)
 })
 watch(dark, value => localStorage.setItem('temperature-theme', value ? 'dark' : 'light'))
 onBeforeUnmount(() => clearInterval(timer))
@@ -93,25 +129,28 @@ onBeforeUnmount(() => clearInterval(timer))
           <div v-if="!devices.length && !error" class="empty card">{{ status === 'pending' ? '測定データを読み込んでいます…' : 'まだ測定データがありません' }}<p>.env に NATURE_TOKEN を設定して Collector を起動してください。初回収集後にここに表示されます。</p></div>
         </section>
 
+        <HistoryCalendar v-if="range" :start="range.start" :end="range.end" :today="today"
+          @select="selectRange" @preset="selectPreset" />
+
         <section class="chart-panel card" aria-label="環境の推移">
           <div class="panel-heading">
             <div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div>
             <div class="trend-controls">
-              <div class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div>
-              <button class="csv-button" :disabled="!csvData.rows.length || status === 'pending'" @click="handleExportCsv">
+              <div v-if="tab === 'overview'" class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div>
+              <button class="csv-button" :disabled="!csvData.rows.length" @click="handleExportCsv">
                 <span>↓</span> CSV出力
               </button>
             </div>
           </div>
           <div class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
           <div class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: ['#26b391', '#6383ed', '#edaa49', '#cf6ba5', '#8f80cf'][i % 5] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
-          <ClientOnly><HistoryChart v-if="hasHistory" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="metric" :dark="dark" :period="period" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
-          <div class="chart-footnote">{{ period === '1w' ? '1時間' : '5分' }}ごとの平均値を表示。空白はデータ未取得の区間です。</div>
+          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="metric" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
+          <div class="chart-footnote">{{ range ? historyInterval : period === '1w' ? '1時間' : '5分' }}ごとの平均値を表示。空白はデータ未取得の区間です。</div>
         </section>
 
         <section class="table-panel card"><div class="panel-heading"><div><p class="eyebrow">MEASUREMENT LOG</p><h2>{{ tab === 'history' ? '期間内の測定履歴' : '最新の測定値' }}</h2></div><span class="table-meta">{{ tab === 'history' ? '最新100件 · 区間平均' : `${devices.length} デバイス` }}</span></div>
           <div class="table-scroll"><table v-if="tab === 'overview'"><thead><tr><th>デバイス</th><th>接続状態</th><th>温度</th><th>湿度</th><th>照度</th><th>温度センサー更新（JST）</th></tr></thead><tbody><tr v-for="d in devices" :key="d.id"><td><strong>{{ d.name }}</strong></td><td><span class="device-badge" :class="d.connection_status"><i />{{ connectionLabels[d.connection_status] }}</span></td><td>{{ format(d.latest.temperature) }} °C</td><td :title="`センサー更新: ${date(d.latest.humidity_updated_at)}`">{{ format(d.latest.humidity) }} %</td><td :title="`センサー更新: ${date(d.latest.illumination_updated_at)}`">{{ format(d.latest.illumination, 0) }} lx</td><td>{{ date(d.latest.temperature_updated_at) }}</td></tr><tr v-if="!devices.length"><td colspan="6" class="empty-cell">測定値はまだありません</td></tr></tbody></table>
-          <table v-else><thead><tr><th>時刻（JST）</th><th>デバイス</th><th>温度</th><th>湿度</th><th>照度</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id + row.timestamp"><td>{{ date(row.timestamp) }}</td><td><strong>{{ row.device }}</strong></td><td>{{ format(row.temperature ?? undefined) }} °C</td><td>{{ format(row.humidity ?? undefined) }} %</td><td>{{ format(row.illumination ?? undefined, 0) }} lx</td></tr><tr v-if="!rows.length"><td colspan="5" class="empty-cell">選択した期間のデータはありません</td></tr></tbody></table></div>
+          <table v-else><thead><tr><th>時刻（JST）</th><th>デバイス</th><th>温度</th><th>湿度</th><th>照度</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id + row.timestamp"><td>{{ date(row.timestamp) }}</td><td><strong>{{ row.device }}</strong></td><td>{{ format(row.temperature ?? undefined) }} °C</td><td>{{ format(row.humidity ?? undefined) }} %</td><td>{{ format(row.illumination ?? undefined, 0) }} lx</td></tr><tr v-if="!rows.length"><td colspan="5" class="empty-cell">{{ !historyReady && !error ? '測定データを読み込んでいます…' : '選択した期間のデータはありません' }}</td></tr></tbody></table></div>
         </section>
         <footer>Temperature Temple <span>Nature Remo / Elasticsearch / Kibana</span></footer>
       </main>

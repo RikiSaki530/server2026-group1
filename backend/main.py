@@ -1,7 +1,7 @@
 import os
 from threading import Lock
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.error import HTTPError
 
 from fastapi import FastAPI, HTTPException, Query
@@ -46,14 +46,24 @@ def health():
         raise HTTPException(503, "Elasticsearch に接続できません。")
 
 
-def dashboard_query(period, now):
+def dashboard_query(period, now, start_date=None, end_date=None):
     minutes, interval = PERIODS[period]
     start = now - timedelta(minutes=minutes)
-    return {"size": 0, "query": {"range": {"@timestamp": {"gte": start.isoformat(), "lte": now.isoformat()}}},
+    end = now
+    end_operator = "lte"
+    if start_date is not None and end_date is not None:
+        jst = timezone(timedelta(hours=9))
+        start = datetime.combine(start_date, datetime.min.time(), jst)
+        end = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), jst)
+        days = (end_date - start_date).days + 1
+        interval = "5m" if days == 1 else "1h" if days <= 7 else "3h" if days <= 31 else "1d"
+        end_operator = "lt"
+    last_bucket = end - timedelta(milliseconds=1) if end_operator == "lt" else end
+    return {"size": 0, "query": {"range": {"@timestamp": {"gte": start.isoformat(), end_operator: end.isoformat()}}},
             "aggs": {"devices": {"terms": {"field": "device_id", "size": 100}, "aggs": {
                 "latest": {"top_hits": {"size": 1, "sort": [{"@timestamp": "desc"}]}},
                 "history": {"date_histogram": {"field": "@timestamp", "fixed_interval": interval, "min_doc_count": 0,
-                    "extended_bounds": {"min": start.isoformat(), "max": now.isoformat()}},
+                    "time_zone": "+09:00", "extended_bounds": {"min": start.isoformat(), "max": last_bucket.isoformat()}},
                     "aggs": {metric: {"avg": {"field": metric}} for metric in METRICS}}}}}}
 
 
@@ -69,12 +79,18 @@ def connection_status(reading, now, collection_failed=False):
 
 
 @app.get("/dashboard")
-def dashboard(period: str = Query("1d", pattern="^(30m|1h|1d|1w)$")):
+def dashboard(period: str = Query("1d", pattern="^(30m|1h|1d|1w)$"),
+              start: date | None = None, end: date | None = None):
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    if (start is not None or end is not None) and (
+        start is None or end is None or not start <= end <= today or (end - start).days >= 366
+    ):
+        raise HTTPException(400, "表示期間は日本時間の今日までの366日以内で指定してください。")
     try:
         now = datetime.now(timezone.utc)
         latest = es(f"{INDEX}/_search", "POST", {"size": 0, "aggs": {"devices": {
             "terms": {"field": "device_id", "size": 100}, "aggs": {"latest": {"top_hits": {"size": 1, "sort": [{"@timestamp": "desc"}]}}}}}})
-        history = es(f"{INDEX}/_search", "POST", dashboard_query(period, now))
+        history = es(f"{INDEX}/_search", "POST", dashboard_query(period, now, start, end))
         histories = {b["key"]: [{"timestamp": p["key_as_string"], **{metric: p[metric]["value"] for metric in METRICS}} for p in b["history"]["buckets"]]
                      for b in history["aggregations"]["devices"]["buckets"]}
         devices = []

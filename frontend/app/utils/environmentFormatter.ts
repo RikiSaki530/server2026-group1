@@ -33,7 +33,8 @@ function roundNumber(value?: number | null, digits = 1): number | '' {
 
 export function formatEnvironmentTrendForCsv(
   visibleDevices: Device[],
-  period: string
+  period: string,
+  range?: { start: string; end: string }
 ): EnvironmentCsvTable {
   const today = getJstDateKey(new Date())
 
@@ -46,7 +47,7 @@ export function formatEnvironmentTrendForCsv(
           if (!hasValue) return false
 
           // 1d（1日）選択時は、日本時間の当日（00:00:00 〜 23:59:59）のデータのみに絞り込む
-          if (period === '1d') {
+          if (!range && period === '1d') {
             return getJstDateKey(p.timestamp) === today
           }
 
@@ -69,6 +70,6 @@ export function formatEnvironmentTrendForCsv(
   return {
     headers,
     rows,
-    filename: `environment_${period}_${today}.csv`
+    filename: range ? `environment_${range.start}_${range.end}.csv` : `environment_${period}_${today}.csv`
   }
 }
