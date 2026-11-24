@@ -1,12 +1,43 @@
 <script setup lang="ts">
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler } from 'chart.js'
 import type { Device, Metric } from '../../shared/types'
+import { chartMetrics, deviceColors } from '../utils/chartSeries'
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler)
-const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; dark: boolean; period: string; range?: { start: string; end: string } }>()
+const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; rightMetric?: Metric; dark: boolean; period: string; range?: { start: string; end: string } }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | undefined
-const colors = ['#26b391', '#6383ed', '#edaa49', '#cf6ba5', '#8f80cf']
-const units = { temperature: '°C', humidity: '%', illumination: 'lx' }
+function saveImage() {
+  const source = canvas.value
+  if (!chart || !source?.width || !source.height) return
+
+  const image = document.createElement('canvas')
+  const scale = chart.currentDevicePixelRatio
+  const header = Math.round(38 * scale)
+  image.width = source.width
+  image.height = source.height + header
+  const context = image.getContext('2d')
+  if (!context) return
+
+  context.fillStyle = props.dark ? '#18272e' : '#ffffff'
+  context.fillRect(0, 0, image.width, image.height)
+  context.fillStyle = props.dark ? '#e4edef' : '#223c47'
+  context.font = `${13 * scale}px sans-serif`
+  const range = props.range
+  const dateLabel = range ? `  ${range.start}${range.end === range.start ? '' : ` 〜 ${range.end}`}  JST` : ''
+  context.fillText(`環境の推移${dateLabel}`, 12 * scale, 24 * scale, image.width - 24 * scale)
+  context.drawImage(source, 0, header)
+  image.toBlob(blob => {
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = range ? `environment_${range.start}_${range.end}.png` : 'environment.png'
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }, 'image/png')
+}
+defineExpose({ saveImage })
+
 function draw() {
   if (!canvas.value) return
   chart?.destroy()
@@ -23,16 +54,45 @@ function draw() {
   chart = new Chart(canvas.value, {
     type: 'line',
     data: {
-      datasets: props.devices.map((d) => {
-        const i = props.deviceIds.indexOf(d.id)
-        const points = new Map(d.history.map(p => [p.timestamp, p[props.metric]]))
-        return { label: d.name, data: times.map(t => ({ x: Date.parse(t), y: points.get(t) ?? null })), borderColor: colors[i % colors.length], backgroundColor: `${colors[i % colors.length]}12`, borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: .25, spanGaps: false, fill: props.devices.length === 1 }
+      datasets: props.devices.flatMap(device => {
+        const color = deviceColors[props.deviceIds.indexOf(device.id) % deviceColors.length]
+        const points = new Map(device.history.map(point => [point.timestamp, point]))
+        const axes = [{ metric: props.metric, id: 'y' }]
+        if (props.rightMetric) axes.push({ metric: props.rightMetric, id: 'yRight' })
+        return axes.map(({ metric, id }) => ({
+          label: range ? `${device.name} · ${chartMetrics[metric].name}` : device.name,
+          yAxisID: id,
+          data: times.map(timestamp => ({ x: Date.parse(timestamp), y: points.get(timestamp)?.[metric] ?? null })),
+          borderColor: color,
+          backgroundColor: `${color}12`,
+          borderDash: id === 'yRight' ? [6, 4] : [],
+          borderWidth: 2.5,
+          pointRadius: 2.5,
+          pointHoverRadius: 5,
+          tension: .25,
+          spanGaps: false,
+          fill: !props.rightMetric && props.devices.length === 1,
+        }))
       }),
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { title: items => items[0] ? timeLabel(items[0].parsed.x ?? 0, true) : '', label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y ?? '—'} ${units[props.metric]}` } } },
+      plugins: {
+        legend: {
+          display: Boolean(range), onClick: () => {},
+          labels: { color: text, boxWidth: 18, boxHeight: 4, font: { size: 10 } },
+        },
+        tooltip: {
+          callbacks: {
+            title: items => items[0] ? timeLabel(items[0].parsed.x ?? 0, true) : '',
+            label: ctx => {
+              const metric = ctx.dataset.yAxisID === 'yRight' ? props.rightMetric ?? props.metric : props.metric
+              return `${ctx.dataset.label}: ${ctx.parsed.y ?? '—'} ${chartMetrics[metric].unit}`
+            },
+          },
+        },
+      },
       scales: {
         x: {
           type: 'linear', min: start, max: end,
@@ -50,14 +110,26 @@ function draw() {
               : timeLabel(Number(value), multiDay),
           },
         },
-        y: { border: { display: false }, grid: { color: props.dark ? '#ffffff0b' : '#153c460a' }, ticks: { color: text, padding: 12 }, title: { display: true, text: units[props.metric], color: text } },
+        y: {
+          position: 'left', border: { display: false },
+          grid: { color: props.dark ? '#ffffff0b' : '#153c460a' },
+          ticks: { color: text, padding: 12 },
+          title: { display: true, text: range ? `${chartMetrics[props.metric].name} (${chartMetrics[props.metric].unit})` : chartMetrics[props.metric].unit, color: text },
+        },
+        ...(props.rightMetric ? {
+          yRight: {
+            type: 'linear' as const, position: 'right' as const, border: { display: false },
+            grid: { drawOnChartArea: false }, ticks: { color: text, padding: 12 },
+            title: { display: true, text: `${chartMetrics[props.rightMetric].name} (${chartMetrics[props.rightMetric].unit})`, color: text },
+          },
+        } : {}),
       },
     },
   })
 }
 onMounted(draw)
-watch(() => [props.devices, props.metric, props.dark, props.period, props.range], draw, { deep: true })
+watch(() => [props.devices, props.metric, props.rightMetric, props.dark, props.period, props.range], draw, { deep: true })
 onBeforeUnmount(() => chart?.destroy())
 </script>
-<template><div class="chart-canvas"><canvas ref="canvas" role="img" :aria-label="`${metric} の測定履歴。数値は下の表でも確認できます。`" /></div></template>
+<template><div class="chart-canvas"><canvas ref="canvas" role="img" :aria-label="`${chartMetrics[metric].name}${rightMetric ? `と${chartMetrics[rightMetric].name}` : ''}の測定履歴。数値は下の表でも確認できます。`" /></div></template>
 <style scoped>.chart-canvas { height: 310px; width: 100%; } @media(max-width:600px) { .chart-canvas {height:250px} }</style>

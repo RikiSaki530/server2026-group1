@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Dashboard, Metric } from '../shared/types'
 import { downloadCsvFile } from './utils/csv'
+import { chartMetrics as metrics, deviceColors } from './utils/chartSeries'
 
 const config = useRuntimeConfig()
 const connectionLabels = { online: 'オンライン', offline: 'オフライン', unknown: '未確認', demo: 'デモ' }
@@ -21,11 +22,18 @@ async function collectNow() {
 }
 const period = ref('1d')
 const metric = ref<Metric>('temperature')
+const historyMetric = ref<Metric>('temperature')
+const rightAxis = ref<Metric | ''>('')
+const chartMetric = computed(() => tab.value === 'history' ? historyMetric.value : metric.value)
+const rightMetric = computed(() => tab.value === 'history' && rightAxis.value && rightAxis.value !== historyMetric.value ? rightAxis.value : undefined)
+const historyChart = ref<{ saveImage: () => void } | null>(null)
+watch(historyMetric, value => {
+  if (rightAxis.value === value) rightAxis.value = ''
+})
 const selected = ref<string[]>([])
 const dark = ref(false)
 const tab = ref<'overview' | 'history'>('overview')
 const periods = [{ id: '30m', name: '30分' }, { id: '1h', name: '1時間' }, { id: '1d', name: '1日' }, { id: '1w', name: '1週間' }]
-const metrics = { temperature: { name: '温度', unit: '°C', icon: '♨' }, humidity: { name: '湿度', unit: '%', icon: '◈' }, illumination: { name: '照度', unit: 'lx', icon: '☼' } }
 function todayInJst() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 }
@@ -62,12 +70,12 @@ function selectPreset(days: number) {
 const devices = computed(() => data.value?.devices || [])
 const visible = computed(() => devices.value.filter(d => !selected.value.includes(d.id)))
 const historyReady = computed(() => result.value?.key === queryKey.value)
-const hasHistory = computed(() => historyReady.value && visible.value.some(d => d.history.some(p => p[metric.value] !== null)))
+const hasHistory = computed(() => historyReady.value && visible.value.some(d => d.history.some(p => p[chartMetric.value] !== null || (rightMetric.value && p[rightMetric.value] !== null))))
 const mean = computed(() => {
   const vals = devices.value.filter(d => !d.stale).map(d => d.latest[metric.value]).filter((v): v is number => typeof v === 'number')
   return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—'
 })
-const rows = computed(() => historyReady.value ? visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100) : [])
+const rows = computed(() => historyReady.value ? visible.value.flatMap(d => d.history.filter(p => p.temperature !== null || p.humidity !== null || p.illumination !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100) : [])
 
 const csvDialog = ref<HTMLDialogElement | null>(null)
 const csvMode = ref<'hourly' | 'raw'>('hourly')
@@ -159,6 +167,28 @@ onBeforeUnmount(() => clearInterval(timer))
         <HistoryCalendar v-if="range" :start="range.start" :end="range.end" :today="today"
           @select="selectRange" @preset="selectPreset" />
 
+        <section v-if="range" class="graph-settings card" aria-labelledby="graph-settings-title">
+          <h2 id="graph-settings-title">グラフ設定</h2>
+          <fieldset class="graph-devices">
+            <legend>デバイス</legend>
+            <label v-for="(device, i) in devices" :key="device.id">
+              <input type="checkbox" :checked="!selected.includes(device.id)" @change="toggle(device.id)">
+              <i aria-hidden="true" :style="{ background: deviceColors[i % deviceColors.length] }" />
+              {{ device.name }}
+            </label>
+          </fieldset>
+          <div class="graph-axes">
+            <label>左軸 <select v-model="historyMetric">
+              <option v-for="(item, key) in metrics" :key="key" :value="key">{{ item.name }} ({{ item.unit }})</option>
+            </select></label>
+            <label>右軸 <select v-model="rightAxis">
+              <option value="">なし</option>
+              <option v-for="(item, key) in metrics" :key="key" :value="key" :disabled="key === historyMetric">{{ item.name }} ({{ item.unit }})</option>
+            </select></label>
+            <span v-if="rightMetric">左：実線 · 右：破線</span>
+          </div>
+        </section>
+
         <section class="chart-panel card" aria-label="環境の推移">
           <div class="panel-heading">
             <div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div>
@@ -167,11 +197,14 @@ onBeforeUnmount(() => clearInterval(timer))
               <button class="csv-button" :disabled="!historyReady || !visible.length" @click="openCsvDialog">
                 <span>↓</span> CSV出力
               </button>
+              <button v-if="range" type="button" class="csv-button" :disabled="!hasHistory || !historyChart" @click="historyChart?.saveImage()">
+                <span aria-hidden="true">↓</span> グラフ画像を保存
+              </button>
             </div>
           </div>
-          <div class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
-          <div class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: ['#26b391', '#6383ed', '#edaa49', '#cf6ba5', '#8f80cf'][i % 5] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
-          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="metric" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
+          <div v-if="!range" class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
+          <div v-if="!range" class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: deviceColors[i % deviceColors.length] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
+          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" ref="historyChart" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="chartMetric" :right-metric="rightMetric" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
           <div class="chart-footnote">{{ range ? historyInterval : period === '1w' ? '1時間' : '5分' }}ごとの平均値を表示。空白はデータ未取得の区間です。</div>
         </section>
 
