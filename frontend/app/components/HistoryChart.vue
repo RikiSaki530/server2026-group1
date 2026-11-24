@@ -3,7 +3,8 @@ import { Chart, LineController, LineElement, PointElement, LinearScale, Category
 import type { Device, Metric } from '../../shared/types'
 import { chartMetrics, seriesColor, type SeriesColors } from '../utils/chartSeries'
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler)
-const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; rightMetric?: Metric; seriesColors?: Record<string, SeriesColors>; dark: boolean; period: string; range?: { start: string; end: string } }>()
+type AxisBounds = { min?: number; max?: number }
+const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; rightMetric?: Metric; leftBounds?: AxisBounds; rightBounds?: AxisBounds; seriesColors?: Record<string, SeriesColors>; dark: boolean; period: string; range?: { start: string; end: string } }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | undefined
 function saveImage() {
@@ -116,7 +117,7 @@ function draw() {
         },
         y: {
           position: 'left', border: { display: false },
-          ...(props.metric === 'illumination' ? { min: 0, max: 200 } : {}),
+          ...(props.metric === 'illumination' ? { min: 0, max: 200 } : props.leftBounds),
           grid: { color: props.dark ? '#ffffff0b' : '#153c460a' },
           ticks: { color: text, padding: 12 },
           title: { display: true, text: range ? `${chartMetrics[props.metric].name} (${chartMetrics[props.metric].unit})` : chartMetrics[props.metric].unit, color: text },
@@ -124,7 +125,7 @@ function draw() {
         ...(props.rightMetric ? {
           yRight: {
             type: 'linear' as const, position: 'right' as const, border: { display: false },
-            ...(props.rightMetric === 'illumination' ? { min: 0, max: 200 } : {}),
+            ...(props.rightMetric === 'illumination' ? { min: 0, max: 200 } : props.rightBounds),
             grid: { drawOnChartArea: false }, ticks: { color: text, padding: 12 },
             title: { display: true, text: `${chartMetrics[props.rightMetric].name} (${chartMetrics[props.rightMetric].unit})`, color: text },
           },
@@ -134,7 +135,7 @@ function draw() {
   })
 }
 onMounted(draw)
-watch(() => [props.devices, props.metric, props.rightMetric, props.seriesColors, props.dark, props.period, props.range], draw, { deep: true })
+watch(() => [props.devices, props.metric, props.rightMetric, props.leftBounds, props.rightBounds, props.seriesColors, props.dark, props.period, props.range], draw, { deep: true })
 onBeforeUnmount(() => chart?.destroy())
 </script>
 <template><div class="chart-canvas"><canvas ref="canvas" role="img" :aria-label="`${chartMetrics[metric].name}${rightMetric ? `と${chartMetrics[rightMetric].name}` : ''}の測定履歴。数値は下の表でも確認できます。`" /></div></template>
