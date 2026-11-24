@@ -863,9 +863,11 @@ footer {
 .graph-settings h2 { margin: 0 0 12px; font-size: 14px; }
 .graph-devices { border: 0; margin: 0 0 12px; padding: 0; min-width: 0; }
 .graph-devices legend { padding: 0; margin-bottom: 4px; color: var(--muted); font-size: 11px; }
-.graph-devices label { display: inline-flex; align-items: center; gap: 6px; margin: 0 12px 4px 0; font-size: 12px; }
+.graph-device { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 4px 0; }
+.graph-devices label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .graph-devices input { accent-color: var(--accent); }
-.graph-devices i { width: 8px; height: 8px; border-radius: 50%; }
+.graph-device .series-color { color: var(--muted); font-size: 11px; }
+.series-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); }
+.series-color select { padding: 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
 .graph-axes { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; font-size: 12px; }
 .graph-axes select { margin-left: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
-.graph-axes span { color: var(--muted); font-size: 11px; }

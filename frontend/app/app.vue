@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Dashboard, Metric } from '../shared/types'
 import { downloadCsvFile } from './utils/csv'
-import { chartMetrics as metrics, deviceColors } from './utils/chartSeries'
+import { chartMetrics as metrics, deviceColors, seriesColor, seriesColorOptions, type SeriesColors } from './utils/chartSeries'
 
 const config = useRuntimeConfig()
 const connectionLabels = { online: 'オンライン', offline: 'オフライン', unknown: '未確認', demo: 'デモ' }
@@ -27,6 +27,11 @@ const rightAxis = ref<Metric | ''>('')
 const chartMetric = computed(() => tab.value === 'history' ? historyMetric.value : metric.value)
 const rightMetric = computed(() => tab.value === 'history' && rightAxis.value && rightAxis.value !== historyMetric.value ? rightAxis.value : undefined)
 const historyChart = ref<{ saveImage: () => void } | null>(null)
+const customColors = ref<Record<string, SeriesColors>>({})
+function updateSeriesColor(id: string, axis: 'left' | 'right', event: Event) {
+  const color = (event.target as HTMLSelectElement).value
+  customColors.value = { ...customColors.value, [id]: { ...customColors.value[id], [axis]: color } }
+}
 watch(historyMetric, value => {
   if (rightAxis.value === value) rightAxis.value = ''
 })
@@ -171,11 +176,28 @@ onBeforeUnmount(() => clearInterval(timer))
           <h2 id="graph-settings-title">グラフ設定</h2>
           <fieldset class="graph-devices">
             <legend>デバイス</legend>
-            <label v-for="(device, i) in devices" :key="device.id">
-              <input type="checkbox" :checked="!selected.includes(device.id)" @change="toggle(device.id)">
-              <i aria-hidden="true" :style="{ background: deviceColors[i % deviceColors.length] }" />
-              {{ device.name }}
-            </label>
+            <div v-for="(device, i) in devices" :key="device.id" class="graph-device">
+              <label>
+                <input type="checkbox" :checked="!selected.includes(device.id)" @change="toggle(device.id)">
+                {{ device.name }}
+              </label>
+              <label class="series-color">
+                左の色
+                <i class="series-swatch" aria-hidden="true" :style="{ backgroundColor: seriesColor(i, 'left', customColors[device.id]) }" />
+                <select :aria-label="`${device.name}の左軸の線の色`"
+                  :value="seriesColor(i, 'left', customColors[device.id])" @change="updateSeriesColor(device.id, 'left', $event)">
+                  <option v-for="color in seriesColorOptions" :key="color.value" :value="color.value">{{ color.name }}</option>
+                </select>
+              </label>
+              <label v-if="rightMetric" class="series-color">
+                右の色
+                <i class="series-swatch" aria-hidden="true" :style="{ backgroundColor: seriesColor(i, 'right', customColors[device.id]) }" />
+                <select :aria-label="`${device.name}の右軸の線の色`"
+                  :value="seriesColor(i, 'right', customColors[device.id])" @change="updateSeriesColor(device.id, 'right', $event)">
+                  <option v-for="color in seriesColorOptions" :key="color.value" :value="color.value">{{ color.name }}</option>
+                </select>
+              </label>
+            </div>
           </fieldset>
           <div class="graph-axes">
             <label>左軸 <select v-model="historyMetric">
@@ -185,7 +207,6 @@ onBeforeUnmount(() => clearInterval(timer))
               <option value="">なし</option>
               <option v-for="(item, key) in metrics" :key="key" :value="key" :disabled="key === historyMetric">{{ item.name }} ({{ item.unit }})</option>
             </select></label>
-            <span v-if="rightMetric">左：実線 · 右：破線</span>
           </div>
         </section>
 
@@ -204,7 +225,7 @@ onBeforeUnmount(() => clearInterval(timer))
           </div>
           <div v-if="!range" class="chart-toolbar"><div class="metric-tabs"><button v-for="(m, key) in metrics" :key="key" :class="{ active: metric === key }" :aria-pressed="metric === key" @click="metric = key">{{ m.icon }} {{ m.name }}</button></div><span class="average">現在の平均 <strong>{{ mean }}</strong> {{ metrics[metric].unit }}</span></div>
           <div v-if="!range" class="legend"><button v-for="(d,i) in devices" :key="d.id" :class="{ muted: selected.includes(d.id) }" :aria-pressed="!selected.includes(d.id)" @click="toggle(d.id)"><i :style="{ background: deviceColors[i % deviceColors.length] }" />{{ d.name }}</button><span>JST · 区間平均</span></div>
-          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" ref="historyChart" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="chartMetric" :right-metric="rightMetric" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
+          <ClientOnly><div v-if="!historyReady && !error" class="chart-empty">測定データを読み込んでいます…</div><HistoryChart v-else-if="hasHistory" ref="historyChart" :devices="visible" :device-ids="devices.map(d => d.id)" :metric="chartMetric" :right-metric="rightMetric" :series-colors="range ? customColors : undefined" :dark="dark" :period="period" :range="range" /><div v-else class="chart-empty"><span>⌁</span><h3>{{ devices.length && !visible.length ? '表示するデバイスを選んでください' : 'この期間の測定データはありません' }}</h3><p>収集したデータが、ここにグラフとして表示されます。</p></div><template #fallback><div class="chart-empty">グラフを読み込んでいます…</div></template></ClientOnly>
           <div class="chart-footnote">{{ range ? historyInterval : period === '1w' ? '1時間' : '5分' }}ごとの平均値を表示。空白はデータ未取得の区間です。</div>
         </section>
 

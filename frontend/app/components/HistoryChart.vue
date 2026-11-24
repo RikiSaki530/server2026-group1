@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler } from 'chart.js'
 import type { Device, Metric } from '../../shared/types'
-import { chartMetrics, deviceColors } from '../utils/chartSeries'
+import { chartMetrics, seriesColor, type SeriesColors } from '../utils/chartSeries'
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler)
-const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; rightMetric?: Metric; dark: boolean; period: string; range?: { start: string; end: string } }>()
+const props = defineProps<{ devices: Device[]; deviceIds: string[]; metric: Metric; rightMetric?: Metric; seriesColors?: Record<string, SeriesColors>; dark: boolean; period: string; range?: { start: string; end: string } }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | undefined
 function saveImage() {
@@ -55,24 +55,28 @@ function draw() {
     type: 'line',
     data: {
       datasets: props.devices.flatMap(device => {
-        const color = deviceColors[props.deviceIds.indexOf(device.id) % deviceColors.length]
+        const index = props.deviceIds.indexOf(device.id)
         const points = new Map(device.history.map(point => [point.timestamp, point]))
         const axes = [{ metric: props.metric, id: 'y' }]
         if (props.rightMetric) axes.push({ metric: props.rightMetric, id: 'yRight' })
-        return axes.map(({ metric, id }) => ({
-          label: range ? `${device.name} · ${chartMetrics[metric].name}` : device.name,
-          yAxisID: id,
-          data: times.map(timestamp => ({ x: Date.parse(timestamp), y: points.get(timestamp)?.[metric] ?? null })),
-          borderColor: color,
-          backgroundColor: `${color}12`,
-          borderDash: id === 'yRight' ? [6, 4] : [],
-          borderWidth: 2.5,
-          pointRadius: 2.5,
-          pointHoverRadius: 5,
-          tension: .25,
-          spanGaps: false,
-          fill: !props.rightMetric && props.devices.length === 1,
-        }))
+        return axes.map(({ metric, id }) => {
+          const color = seriesColor(index, id === 'yRight' ? 'right' : 'left', props.seriesColors?.[device.id])
+          const data = times.map(timestamp => ({ x: Date.parse(timestamp), y: points.get(timestamp)?.[metric] ?? null }))
+          return {
+            label: range ? `${device.name} · ${chartMetrics[metric].name}` : device.name,
+            yAxisID: id,
+            data,
+            borderColor: color,
+            pointBackgroundColor: color,
+            backgroundColor: `${color}12`,
+            borderWidth: 2.5,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            tension: 0,
+            spanGaps: false,
+            fill: !props.rightMetric && props.devices.length === 1,
+          }
+        })
       }),
     },
     options: {
@@ -128,7 +132,7 @@ function draw() {
   })
 }
 onMounted(draw)
-watch(() => [props.devices, props.metric, props.rightMetric, props.dark, props.period, props.range], draw, { deep: true })
+watch(() => [props.devices, props.metric, props.rightMetric, props.seriesColors, props.dark, props.period, props.range], draw, { deep: true })
 onBeforeUnmount(() => chart?.destroy())
 </script>
 <template><div class="chart-canvas"><canvas ref="canvas" role="img" :aria-label="`${chartMetrics[metric].name}${rightMetric ? `と${chartMetrics[rightMetric].name}` : ''}の測定履歴。数値は下の表でも確認できます。`" /></div></template>
