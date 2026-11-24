@@ -116,6 +116,7 @@ function draw() {
         },
         y: {
           position: 'left', border: { display: false },
+          ...(props.metric === 'illumination' ? { min: 0, max: 200 } : {}),
           grid: { color: props.dark ? '#ffffff0b' : '#153c460a' },
           ticks: { color: text, padding: 12 },
           title: { display: true, text: range ? `${chartMetrics[props.metric].name} (${chartMetrics[props.metric].unit})` : chartMetrics[props.metric].unit, color: text },
@@ -123,6 +124,7 @@ function draw() {
         ...(props.rightMetric ? {
           yRight: {
             type: 'linear' as const, position: 'right' as const, border: { display: false },
+            ...(props.rightMetric === 'illumination' ? { min: 0, max: 200 } : {}),
             grid: { drawOnChartArea: false }, ticks: { color: text, padding: 12 },
             title: { display: true, text: `${chartMetrics[props.rightMetric].name} (${chartMetrics[props.rightMetric].unit})`, color: text },
           },
