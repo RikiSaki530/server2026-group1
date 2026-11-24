@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { Dashboard, Metric } from '../shared/types'
-import { formatEnvironmentTrendForCsv } from './utils/environmentFormatter'
 import { downloadCsvFile } from './utils/csv'
 
 const config = useRuntimeConfig()
@@ -70,11 +69,39 @@ const mean = computed(() => {
 })
 const rows = computed(() => historyReady.value ? visible.value.flatMap(d => d.history.filter(p => p[metric.value] !== null).map(p => ({ ...p, device: d.name, id: d.id }))).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 100) : [])
 
-// 出力対象データの準備とクリック時ハンドラ
-const csvData = computed(() => formatEnvironmentTrendForCsv(historyReady.value ? visible.value : [], period.value, range.value))
-function handleExportCsv() {
-  if (!csvData.value.rows.length) return
-  downloadCsvFile(csvData.value.headers, csvData.value.rows, csvData.value.filename)
+const csvDialog = ref<HTMLDialogElement | null>(null)
+const csvMode = ref<'hourly' | 'raw'>('hourly')
+const exporting = ref(false)
+const csvMessage = ref('')
+function openCsvDialog() {
+  csvMessage.value = ''
+  csvDialog.value?.showModal()
+}
+async function handleExportCsv() {
+  if (exporting.value) return
+  const mode = csvMode.value
+  const requestedRange = range.value
+  const requestedPeriod = period.value
+  const deviceIds = visible.value.map(device => device.id)
+  exporting.value = true
+  csvMessage.value = ''
+  try {
+    const rows = await $fetch<unknown[][]>('/api/export', {
+      method: 'POST', body: { mode, period: requestedPeriod, ...requestedRange, device_ids: deviceIds },
+      timeout: 125000, retry: 0,
+    })
+    if (!rows.length) {
+      csvMessage.value = 'この期間に出力できる測定データがありません。'
+      return
+    }
+    const dateLabel = requestedRange ? `${requestedRange.start}_${requestedRange.end}` : `${requestedPeriod}_${today.value}`
+    downloadCsvFile(['時刻(JST)', 'デバイス', '温度(°C)', '湿度(%)', '照度(lx)'], rows, `environment_${mode}_${dateLabel}.csv`)
+    csvDialog.value?.close()
+  } catch {
+    csvMessage.value = 'CSVを出力できませんでした。もう一度お試しください。'
+  } finally {
+    exporting.value = false
+  }
 }
 
 function format(value?: number, digits = 1) { return value == null ? '—' : value.toLocaleString('ja-JP', { maximumFractionDigits: digits }) }
@@ -137,7 +164,7 @@ onBeforeUnmount(() => clearInterval(timer))
             <div><p class="eyebrow">ENVIRONMENT TRENDS</p><h2>環境の推移</h2></div>
             <div class="trend-controls">
               <div v-if="tab === 'overview'" class="periods" aria-label="表示期間"><button v-for="p in periods" :key="p.id" :class="{ active: period === p.id }" :aria-pressed="period === p.id" @click="period = p.id">{{ p.name }}</button></div>
-              <button class="csv-button" :disabled="!csvData.rows.length" @click="handleExportCsv">
+              <button class="csv-button" :disabled="!historyReady || !visible.length" @click="openCsvDialog">
                 <span>↓</span> CSV出力
               </button>
             </div>
@@ -152,6 +179,21 @@ onBeforeUnmount(() => clearInterval(timer))
           <div class="table-scroll"><table v-if="tab === 'overview'"><thead><tr><th>デバイス</th><th>接続状態</th><th>温度</th><th>湿度</th><th>照度</th><th>温度センサー更新（JST）</th></tr></thead><tbody><tr v-for="d in devices" :key="d.id"><td><strong>{{ d.name }}</strong></td><td><span class="device-badge" :class="d.connection_status"><i />{{ connectionLabels[d.connection_status] }}</span></td><td>{{ format(d.latest.temperature) }} °C</td><td :title="`センサー更新: ${date(d.latest.humidity_updated_at)}`">{{ format(d.latest.humidity) }} %</td><td :title="`センサー更新: ${date(d.latest.illumination_updated_at)}`">{{ format(d.latest.illumination, 0) }} lx</td><td>{{ date(d.latest.temperature_updated_at) }}</td></tr><tr v-if="!devices.length"><td colspan="6" class="empty-cell">測定値はまだありません</td></tr></tbody></table>
           <table v-else><thead><tr><th>時刻（JST）</th><th>デバイス</th><th>温度</th><th>湿度</th><th>照度</th></tr></thead><tbody><tr v-for="row in rows" :key="row.id + row.timestamp"><td>{{ date(row.timestamp) }}</td><td><strong>{{ row.device }}</strong></td><td>{{ format(row.temperature ?? undefined) }} °C</td><td>{{ format(row.humidity ?? undefined) }} %</td><td>{{ format(row.illumination ?? undefined, 0) }} lx</td></tr><tr v-if="!rows.length"><td colspan="5" class="empty-cell">{{ !historyReady && !error ? '測定データを読み込んでいます…' : '選択した期間のデータはありません' }}</td></tr></tbody></table></div>
         </section>
+        <dialog ref="csvDialog" class="export-dialog card" aria-labelledby="export-title" @cancel="exporting && $event.preventDefault()">
+          <form @submit.prevent="handleExportCsv">
+            <h2 id="export-title">CSV出力</h2>
+            <fieldset :disabled="exporting">
+              <legend>出力するデータ</legend>
+              <label><input v-model="csvMode" type="radio" value="hourly" autofocus> 1時間平均</label>
+              <label><input v-model="csvMode" type="radio" value="raw"> 5分おきの生データ</label>
+            </fieldset>
+            <p v-if="csvMessage" role="status">{{ csvMessage }}</p>
+            <div class="export-actions">
+              <button type="button" class="csv-button" :disabled="exporting" @click="csvDialog?.close()">キャンセル</button>
+              <button type="submit" class="csv-button" :disabled="exporting">{{ exporting ? '出力中…' : 'ダウンロード' }}</button>
+            </div>
+          </form>
+        </dialog>
         <footer>Temperature Temple <span>Nature Remo / Elasticsearch / Kibana</span></footer>
       </main>
     </div>

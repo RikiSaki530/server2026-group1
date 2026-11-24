@@ -845,3 +845,16 @@ footer {
     font-size:11px
   }
 }
+
+.export-dialog {
+  width: min(360px, calc(100% - 32px));
+  padding: 20px;
+  color: var(--ink);
+}
+.export-dialog::backdrop { background: #101b2170; }
+.export-dialog h2 { margin: 0 0 16px; font-size: 16px; }
+.export-dialog fieldset { margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.export-dialog legend, .export-dialog p { font-size: 12px; }
+.export-dialog label { display: flex; gap: 8px; align-items: center; padding: 6px 0; font-size: 13px; }
+.export-dialog input { accent-color: var(--accent); }
+.export-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
